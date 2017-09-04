@@ -47,9 +47,9 @@ initialGame = Game quests
 gameTick :: Int -> GameStateM ()
 gameTick ticks = return ()
 
-attemptQuestTag :: Character -> QuestTag -> GameStateM QuestResult
+attemptQuestTag :: Character -> QuestTag -> GameStateM (Character, QuestResult)
 attemptQuestTag char qt = do
   q <- preuse (livequests . ix qt)
   case q of
-    Nothing -> return $ QuestFailure "No such quest available to me."
+    Nothing -> return $ (char, QuestFailure "No such quest available to me.")
     Just quest -> char `attemptQuest` quest

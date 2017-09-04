@@ -15,6 +15,7 @@ import           Domain.Game.Algebra
 import           Domain.Quest.Algebra
 import           Domain.Quest.Postgres
 import           Domain.User.Algebra
+import           Domain.User.Postgres
 import           Database.PostgreSQL.Simple.SqlQQ
 import           Lens.Micro.Platform
 import           Utility.Postgres
@@ -23,14 +24,13 @@ import qualified Data.ByteString.Lazy as BS
 
 createEventTable :: PSQL.Connection -> IO ()
 createEventTable conn =
-  PSQL.execute_ conn [sql| CREATE TABLE events( id UUID PRIMARY KEY, uid UUID, event TEXT ) |] >> return ()
+  PSQL.execute_ conn [sql| CREATE TABLE IF NOT EXISTS events( id UUID PRIMARY KEY DEFAULT gen_random_uuid(), uid UUID, event TEXT ) |] >> return ()
 
 createNewEvent :: PSQL.Connection -> UserId -> Event -> IO EventId
 createNewEvent conn uid event = do
-  eid <- nextRandom
   head . map PSQL.fromOnly <$> PSQL.query conn [sql|
-    INSERT INTO events VALUES (?, ?, ?) RETURNING id
-  |] (eid, uid, event)
+    INSERT INTO events VALUES (DEFAULT, ?, ?) RETURNING id
+  |] (uid, event)
 
 getEventsByUserId :: PSQL.Connection -> UserId -> IO [(EventId, Event)]
 getEventsByUserId conn uid =
@@ -41,8 +41,8 @@ getEventsByUserId conn uid =
       handleResponse :: (EventId, UserId, BS.ByteString) -> (EventId, Event)
       handleResponse (eid, uid, bs) = (eid, fromJust $ decode bs)
 
-deleteEvent :: PSQL.Connection -> EventId -> IO ()
-deleteEvent conn eid = PSQL.execute conn [sql| DELETE FROM events WHERE id = ? |] (PSQL.Only eid) >> return ()
+deleteUserEvent :: PSQL.Connection -> UserId -> EventId -> IO ()
+deleteUserEvent conn uid eid = PSQL.execute conn [sql| DELETE FROM events WHERE id = ? AND uid = ? |] (eid, uid) >> return ()
 
 runQuests :: Game -> PSQL.Connection -> IO [EventId]
 runQuests game conn = do
@@ -57,15 +57,16 @@ runQuests game conn = do
           Just cr -> do
             let questResultM = (cr ^. character) `attemptQuestTag` qt
             questResult <- evalStateT questResultM game
-            Just <$> createNewEvent conn (cr ^. userid) (CharacterReturnFromQuest cid questResult)
+            updateCharacter conn cid (fst questResult)
+            Just <$> createNewEvent conn (cr ^. userid) (CharacterReturnFromQuest cid $ snd questResult)
 
 runTest :: IO ()
 runTest = do
   conn <- connectToLocalhost
-  let thisuser = User (fromJust $ fromString "f2793f4e-8a4f-4baf-871e-973484c02599") "real@notfake.com" "dala"
-  (Right cid) <- insertRandomCharacter conn thisuser "luatest.lua" ""
-  (Right cid2) <- insertRandomCharacter conn thisuser "luatest.lua" ""
+  let thisuid = fromJust $ fromString "3295112f-6db3-4741-9fdb-42034c67992c"
+  (Right cid) <- insertRandomCharacter conn thisuid "luatest.lua" ""
+  (Right cid2) <- insertRandomCharacter conn thisuid "luatest.lua" ""
   insertActiveQuest conn cid "localTavern" 1
-  insertActiveQuest conn cid2 "localTavern" 1
+  insertActiveQuest conn cid2 "localTavern" 2
   runQuests initialGame conn
   return ()

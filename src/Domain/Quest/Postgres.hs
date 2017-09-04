@@ -12,7 +12,7 @@ import qualified Data.Text as T
 createActiveQuestTable :: PSQL.Connection -> IO ()
 createActiveQuestTable conn =
   PSQL.execute_ conn [sql|
-    CREATE TABLE activequests( charid UUID PRIMARY KEY, questtag TEXT, timeremaining INT )
+    CREATE TABLE IF NOT EXISTS activequests( charid UUID PRIMARY KEY, questtag TEXT, timeremaining INT )
   |] >> return ()
 
 insertActiveQuest :: PSQL.Connection -> CharacterId -> QuestTag -> TimeRemaining -> IO ()

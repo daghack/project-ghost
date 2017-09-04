@@ -7,17 +7,18 @@ module Domain.Character.Algebra where
 import           Control.Monad (replicateM)
 import           Control.Monad.Random
 import           Data.Aeson
-import           Data.UUID
 import           Data.Maybe
 import           Data.Monoid
+import           Data.UUID
+import           Database.PostgreSQL.Simple.FromField
+import           Database.PostgreSQL.Simple.FromRow
+import           Database.PostgreSQL.Simple.ToField
+import           Database.PostgreSQL.Simple.ToRow
+import           Domain.Character.Attributes
 import           GHC.Generics
 import           Lens.Micro.Platform
-import qualified Data.Text as T
 import qualified Data.Map.Lazy as M
-import           Database.PostgreSQL.Simple.FromField
-import           Database.PostgreSQL.Simple.ToField
-import           Database.PostgreSQL.Simple.FromRow
-import           Database.PostgreSQL.Simple.ToRow
+import qualified Data.Text as T
 
 type CharacterId = UUID
 
@@ -70,7 +71,6 @@ getNameFromNameList :: [T.Text] -> NameList -> CharacterRace -> Gender -> [T.Tex
 getNameFromNameList def nl r g =
   let dl = M.lookup r nl >>= M.lookup g in
   fromMaybe def dl
-
 
 data ClassType = Fighter | Ranger | Wizard
   deriving (Show, Eq, Ord, Enum, Bounded, Generic)
@@ -156,6 +156,7 @@ data Character =
             , _charprof    :: CharacterProf
             , _race        :: CharacterRace
             , _basestats   :: Statblock
+            , _attrset     :: CharacterAttrSet
   } deriving (Show, Generic)
 
 instance ToJSON Character
@@ -167,10 +168,11 @@ instance FromRow Character where
               fromRow <*>
               fromRow <*>
               field   <*>
-              fromRow
+              fromRow <*>
+              field
 instance ToRow Character where
-  toRow (Character n g c p r s) =
-    toRow n <> [toField g] <> toRow c <> toRow p <> [toField r] <> toRow s
+  toRow (Character n g c p r s a) =
+    toRow n <> [toField g] <> toRow c <> toRow p <> [toField r] <> toRow s <> [toField a]
 
 concat <$> mapM makeLenses [ ''CharacterName
                            , ''CharacterClass

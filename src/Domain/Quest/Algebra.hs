@@ -4,31 +4,23 @@
 
 module Domain.Quest.Algebra where
 
+import           Control.Monad.Random
+import           Control.Monad.Reader
 import           Control.Monad.State.Strict
 import           Control.Monad.Trans (lift)
-import           Control.Monad.Reader
-import           Control.Monad.Random
 import           Data.Aeson
 import           Data.UUID
+import           Database.PostgreSQL.Simple.FromRow
 import           Domain.Character.Algebra
+import           Domain.Character.Attributes
 import           GHC.Generics
 import           Lens.Micro.Platform
-import           Database.PostgreSQL.Simple.FromRow
+import           Utility.CondList
 import qualified Data.Text as T
 
 type QuestTag = T.Text
 
 type TimeRemaining = Int
-
-data QuestRequirements =
-  QuestRequirements { _reqclass  :: Maybe CharacterClass
-                    , _reqprof   :: Maybe CharacterProf
-                    , _reqrace   :: Maybe CharacterRace
-                    , _reqgender :: Maybe Gender
-                    , _reqstats  :: Maybe Statblock
-  } deriving (Show)
-
-makeLenses ''QuestRequirements
 
 data QuestRewards =
   QuestRewards { _experience :: Maybe Int
@@ -54,12 +46,24 @@ instance FromJSON QuestResult
 
 data QuestInternal =
   QuestInternal { _successprob :: Double
+                , _questcharacter :: Character
   } deriving (Show)
 defaultQuestInternal = QuestInternal 0.0
 
 makeLenses ''QuestInternal
 
-type QuestChance = StateT QuestInternal (Reader Character) ()
+type QuestChance = State QuestInternal ()
+
+charHasAttr :: CharacterAttr -> Character -> Bool
+charHasAttr attr char = view attrset char `hasAttr` attr
+
+addQuestAttr :: CharacterAttr -> QuestChance
+addQuestAttr attr = do
+  questcharacter . attrset %= flip addAttr attr
+
+removeQuestAttr :: CharacterAttr -> QuestChance
+removeQuestAttr attr = do
+  questcharacter . attrset %= flip removeAttr attr
 
 difficulty :: QuestDifficulty -> QuestChance
 difficulty Easy = successprob += 0.75
@@ -69,7 +73,7 @@ difficulty Impossible = successprob += 0.0
 
 charMeetsCondition :: (Character -> Bool) -> Double -> QuestChance
 charMeetsCondition cond prob = do
-  meetsCond <- lift $ asks cond
+  meetsCond <- gets (cond . view questcharacter)
   if meetsCond
     then successprob += prob
     else return ()
@@ -98,7 +102,7 @@ isNotClassType :: ClassType -> Double -> QuestChance
 isNotClassType = charNEqGetter (charclass . classtype)
 
 data Quest =
-  Quest { _requirements :: QuestRequirements
+  Quest { _requirements :: ConditionChain Character
         , _rewards :: QuestRewards
         , _timeToComplete :: Int
         , _description :: T.Text
@@ -124,44 +128,20 @@ instance FromJSON CharRecord
 instance FromRow CharRecord where
   fromRow = CharRecord <$> field <*> field <*> fromRow <*> field <*> field
 
-attemptQuest :: (MonadRandom m) => Character -> Quest -> m QuestResult
+attemptQuest :: (MonadRandom m) => Character -> Quest -> m (Character, QuestResult)
 attemptQuest char quest
-  | not $ char `meetsRequirementFor` quest = do
+  | not $ char `meetsRequirementsFor` quest = do
     failmsg <- fromList $ zip (quest ^. failureMessages) (repeat 1.0)
-    return $ QuestFailure failmsg
+    return $ (char, QuestFailure failmsg)
   | otherwise = do
-    let chanceToSucceedReader = execStateT (quest ^. chanceToSucceed) defaultQuestInternal
-    let qi' = runReader chanceToSucceedReader char
+    let qi' = execState (quest ^. chanceToSucceed) (defaultQuestInternal char)
+    let char' = qi' ^. questcharacter
     r <- getRandomR (0.0, 1.0)
     failmsg <- fromList $ zip (quest ^. failureMessages) (repeat 1.0)
     succmsg <- fromList $ zip (quest ^. successMessages) (repeat 1.0)
     if qi' ^. successprob < r
-      then return $ QuestFailure failmsg
-      else return $ QuestSuccess succmsg (quest ^. rewards)
+      then return $ (char', QuestFailure failmsg)
+      else return $ (char', QuestSuccess succmsg (quest ^. rewards))
 
-meetsRequirementFor :: Character -> Quest -> Bool
-meetsRequirementFor char quest =
-  and [ meetsClass char $ quest ^. requirements . reqclass
-      , meetsProf char $ quest ^. requirements . reqprof
-      , meetsRace char $ quest ^. requirements . reqrace
-      , meetsGender char $ quest ^. requirements . reqgender
-      , meetsStatblock char $ quest ^. requirements . reqstats ]
-    where
-      meetsClass _ Nothing = True
-      meetsClass char (Just c) =
-        char ^. charclass . classtype == c ^. classtype &&
-        char ^. charclass . classlevel <= c ^. classlevel
-      meetsProf _ Nothing = True
-      meetsProf char (Just p) =
-        char ^. charprof . proftype == p ^. proftype &&
-        char ^. charprof . proflevel == p ^. proflevel
-      meetsRace _ Nothing = True
-      meetsRace char (Just r) = char ^. race == r
-      meetsGender _ Nothing = True
-      meetsGender char (Just g) =
-        char ^. gender == g
-      meetsStatblock _ Nothing = True
-      meetsStatblock char (Just s) =
-        let charStatList = fromStatblock $ char ^. basestats
-            reqStatList = fromStatblock s in
-          and $ zipWith (>=) charStatList reqStatList
+meetsRequirementsFor :: Character -> Quest -> Bool
+meetsRequirementsFor char quest = meetsAll char (quest ^. requirements)

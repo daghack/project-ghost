@@ -7,6 +7,7 @@ import           Data.Aeson
 import           Domain.Character.Algebra
 import           Control.Monad.Random
 import           Domain.Character.Lua
+import           Domain.Character.Attributes
 import           Utility.Lua
 import qualified Data.Text as T
 import qualified Foreign.Lua as Lua
@@ -63,7 +64,8 @@ randCharacter titles firsts lasts = do
     randCharacterClass 1 <*>
     randCharacterProf 1 <*>
     pure race <*>
-    randStatblock (Statblock 10 10 10 10 10 10) 4
+    randStatblock (Statblock 10 10 10 10 10 10) 4 <*>
+    pure emptyAttrSet
 
 genRandomCharacter :: FilePath -> String -> IO Character
 genRandomCharacter namefile namesprefix = do

@@ -18,15 +18,14 @@ import qualified Data.ByteString.Char8 as BSC
 createUserTable :: PSQL.Connection -> IO ()
 createUserTable conn =
   PSQL.execute_ conn [sql|
-    CREATE TABLE users(uid UUID PRIMARY KEY, email TEXT UNIQUE, username TEXT UNIQUE)
+    CREATE TABLE IF NOT EXISTS users(uid UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT UNIQUE, username TEXT UNIQUE)
   |] >> return ()
 
 insertNewUser :: PSQL.Connection -> T.Text -> T.Text -> IO (Either String UserId)
 insertNewUser conn email username = do
-  uid <- nextRandom
   fmap (PSQL.fromOnly . head) <$> defHandleQuery conn [sql|
-    INSERT INTO USERS VALUES(?, ?, ?) RETURNING uid
-  |] (uid, email, username)
+    INSERT INTO USERS VALUES(DEFAULT, ?, ?) RETURNING uid
+  |] (email, username)
 
 getUserById :: PSQL.Connection -> UUID -> IO (Maybe User)
 getUserById conn uid = do

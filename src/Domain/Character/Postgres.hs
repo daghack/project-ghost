@@ -12,41 +12,44 @@ import           Data.Either
 import           Data.Maybe
 import           Data.UUID
 import           Data.UUID.V4
+import           Database.PostgreSQL.Simple ((:.)(..))
 import           Database.PostgreSQL.Simple.FromRow
 import           Database.PostgreSQL.Simple.SqlQQ
 import           Domain.Character.Algebra
+import           Domain.Character.Attributes
 import           Domain.Character.Random
 import           Domain.Quest.Algebra
 import           Domain.User.Algebra
 import           GHC.Generics
 import           Lens.Micro.Platform
 import           Utility.Postgres
-import qualified Database.PostgreSQL.Simple as PSQL
-import           Database.PostgreSQL.Simple ((:.)(..))
-import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as BSC
+import qualified Data.Text as T
+import qualified Database.PostgreSQL.Simple as PSQL
 
 createCharacterTable :: PSQL.Connection -> IO ()
 createCharacterTable conn =
   PSQL.execute_ conn [sql|
-    CREATE TABLE characters( id UUID PRIMARY KEY
-                           , uid UUID
-                           , firstname TEXT
-                           , lastname TEXT
-                           , title TEXT
-                           , gender INT
-                           , classtype INT
-                           , classlevel INT
-                           , proftype INT
-                           , proflevel INT
-                           , race INT
-                           , stat1 INT
-                           , stat2 INT
-                           , stat3 INT
-                           , stat4 INT
-                           , stat5 INT
-                           , stat6 INT
-                           )
+    CREATE TABLE IF NOT EXISTS
+      characters( id UUID PRIMARY KEY DEFAULT gen_random_uuid()
+                , uid UUID
+                , firstname TEXT
+                , lastname TEXT
+                , title TEXT
+                , gender INT
+                , classtype INT
+                , classlevel INT
+                , proftype INT
+                , proflevel INT
+                , race INT
+                , stat1 INT
+                , stat2 INT
+                , stat3 INT
+                , stat4 INT
+                , stat5 INT
+                , stat6 INT
+                , attrset TEXT[]
+                )
   |] >> return ()
 
 mkTestUser :: IO User
@@ -61,19 +64,41 @@ testchar =
             , _charprof = CharacterProf Soldier 5
             , _race = Human
             , _basestats = Statblock 10 10 10 10 10 10
-
+            , _attrset = fromAttrList ["charming", "goblinfriend"]
   }
 
-insertCharacter :: PSQL.Connection -> User -> Character -> IO (Either String CharacterId)
-insertCharacter conn user char = do
-  let userid = user ^. uid
+insertCharacter :: PSQL.Connection -> UserId -> Character -> IO (Either String CharacterId)
+insertCharacter conn userid char = do
   uuid <- nextRandom
   fmap (PSQL.fromOnly . head) <$> defHandleQuery conn [sql|
-    INSERT INTO characters VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO characters VALUES(DEFAULT, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     RETURNING id
-  |] ((uuid, userid) PSQL.:. char)
+  |] ([userid] :. char)
 
-insertRandomCharacter :: PSQL.Connection -> User -> FilePath -> String -> IO (Either String CharacterId)
+updateCharacter :: PSQL.Connection -> CharacterId -> Character -> IO ()
+updateCharacter conn cid char =
+  PSQL.execute conn [sql|
+    UPDATE characters
+      SET firstname = ?
+        , lastname = ?
+        , title = ?
+        , gender = ?
+        , classtype = ?
+        , classlevel = ?
+        , proftype = ?
+        , proflevel = ?
+        , race = ?
+        , stat1 = ?
+        , stat2 = ?
+        , stat3 = ?
+        , stat4 = ?
+        , stat5 = ?
+        , stat6 = ?
+        , attrset = ?
+      WHERE id = ?
+  |] (char :. [toString cid]) >> return ()
+
+insertRandomCharacter :: PSQL.Connection -> UserId -> FilePath -> String -> IO (Either String CharacterId)
 insertRandomCharacter conn user luafile varprefix = do
   char <- genRandomCharacter luafile varprefix
   insertCharacter conn user char
